@@ -1,7 +1,10 @@
 import axios from "axios";
 import { useAuthStore } from "../../stores/auth-store";
 
-const apiOrigin = (import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000").replace(/\/+$/, "");
+const defaultApiOrigin = import.meta.env.PROD
+  ? "https://ai-teamspace.onrender.com"
+  : "http://localhost:8000";
+const apiOrigin = (import.meta.env.VITE_API_BASE_URL ?? defaultApiOrigin).replace(/\/+$/, "");
 
 export const apiClient = axios.create({
   baseURL: `${apiOrigin}/api/v1`,
