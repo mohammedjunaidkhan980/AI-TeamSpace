@@ -1,13 +1,21 @@
 import asyncio
 from typing import Any
 
+from pymongo.database import Database
+
 from app.core.config import Settings
 from app.services.chroma import get_chroma_collection
+from app.services.mongo_storage import MongoVectorStore
 
 
 class DocumentRetrievalService:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        database: Database[dict[str, Any]] | None = None,
+    ) -> None:
         self._settings = settings
+        self._database = database
 
     async def retrieve(
         self,
@@ -16,7 +24,7 @@ class DocumentRetrievalService:
         query: str,
         limit: int = 5,
     ) -> list[dict[str, Any]]:
-        if not self._settings.chroma_enabled:
+        if not self._settings.use_mongo_storage and not self._settings.chroma_enabled:
             return []
         api_key = self._settings.gemini_api_key or self._settings.google_api_key
         if not api_key:
@@ -28,6 +36,51 @@ class DocumentRetrievalService:
             google_api_key=api_key,
         )
         query_embedding = await embeddings.aembed_query(query[:8000])
+        if self._settings.use_mongo_storage:
+            if self._database is None:
+                raise RuntimeError("MongoDB is required for vector retrieval")
+            matches = await MongoVectorStore(
+                self._database,
+                max_candidates=self._settings.mongo_vector_max_candidates,
+            ).query(
+                group_id=group_id,
+                query_embedding=query_embedding,
+                limit=limit,
+            )
+            excerpts: list[dict[str, Any]] = []
+            for match in matches:
+                metadata = match.get("metadata")
+                if not isinstance(metadata, dict):
+                    continue
+                document_id = match.get("document_id")
+                filename = metadata.get("filename")
+                chunk_index = match.get("chunk_index")
+                text = match.get("text")
+                if (
+                    match.get("group_id") != group_id
+                    or not isinstance(document_id, str)
+                    or not isinstance(filename, str)
+                    or not isinstance(chunk_index, int)
+                    or not isinstance(text, str)
+                    or not text
+                ):
+                    continue
+                page_number = metadata.get("page_number")
+                excerpts.append(
+                    {
+                        "document_id": document_id,
+                        "filename": filename[:255],
+                        "chunk_index": chunk_index,
+                        "page_number": (
+                            page_number
+                            if isinstance(page_number, int) and page_number > 0
+                            else None
+                        ),
+                        "excerpt": text[:1200],
+                    }
+                )
+            return excerpts
+
         collection = await asyncio.to_thread(
             get_chroma_collection, self._settings
         )

@@ -5,6 +5,7 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any
+from urllib.parse import quote
 
 from bson import ObjectId
 from fastapi import (
@@ -18,7 +19,7 @@ from fastapi import (
     UploadFile,
     status,
 )
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from pymongo.database import Database
 
 from app.core.config import Settings
@@ -40,7 +41,16 @@ from app.schemas.documents import (
     DocumentRetryResponse,
 )
 from app.services.document_processing import DocumentProcessingService
-from app.services.document_storage import LocalDocumentStorage
+from app.services.document_storage import (
+    LocalDocumentStorage,
+    create_document_storage,
+)
+from app.services.mongo_storage import (
+    DocumentStorageCapacityError,
+    DocumentStorageError,
+    DocumentStorageNotFoundError,
+    MongoGridFSDocumentStorage,
+)
 
 logger = logging.getLogger(__name__)
 documents_router = APIRouter()
@@ -105,10 +115,16 @@ async def _validate_upload(
         raise HTTPException(status_code=415, detail="Only PDF, TXT, and DOCX files are supported")
     if upload.content_type not in allowed_mimes:
         raise HTTPException(status_code=415, detail="File content type does not match a supported format")
+    maximum_upload_bytes = settings.document_max_upload_bytes
+    if settings.use_mongo_storage:
+        maximum_upload_bytes = min(
+            maximum_upload_bytes,
+            settings.mongo_document_max_upload_bytes,
+        )
     data = bytearray()
     while chunk := await upload.read(1024 * 1024):
         data.extend(chunk)
-        if len(data) > settings.document_max_upload_bytes:
+        if len(data) > maximum_upload_bytes:
             raise HTTPException(status_code=413, detail="Document exceeds the upload size limit")
     content = bytes(data)
     if not content:
@@ -172,8 +188,19 @@ async def upload_group_document(
         raise HTTPException(status_code=401, detail="Authenticated user not found")
     filename = file.filename or f"document{extension}"
     storage_key = f"{uuid.uuid4().hex}{extension}"
-    storage = LocalDocumentStorage(settings)
-    await storage.put(storage_key, data)
+    storage = create_document_storage(database, settings)
+    try:
+        await storage.put(storage_key, data)
+    except DocumentStorageCapacityError:
+        raise HTTPException(
+            status_code=507,
+            detail="Document storage capacity is exhausted",
+        ) from None
+    except DocumentStorageError:
+        raise HTTPException(
+            status_code=503,
+            detail="Document storage is temporarily unavailable",
+        ) from None
     now = datetime.now(timezone.utc)
     try:
         document = await insert_document(
@@ -195,7 +222,13 @@ async def upload_group_document(
             },
         )
     except Exception:
-        await storage.delete(storage_key)
+        try:
+            await storage.delete(storage_key)
+        except DocumentStorageError:
+            logger.exception(
+                "Failed to clean up uploaded file after document record failure",
+                extra={"storage_type": type(storage).__name__},
+            )
         raise
     background_tasks.add_task(
         _processing_service(database, settings).process,
@@ -274,18 +307,40 @@ async def get_document_details(
     return _document_response(document)
 
 
-@documents_router.get("/{document_id}/download")
+@documents_router.get("/{document_id}/download", response_model=None)
 async def download_document(
     document_id: str,
     current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     database: Annotated[Database[dict[str, Any]], Depends(get_database)],
     request: Request,
-) -> FileResponse:
+) -> Response:
     document = await get_document(database, document_id)
     if document is None:
         raise HTTPException(status_code=404, detail="Document not found")
     await _require_group(database, str(document["group_id"]), current_user.id)
-    path = LocalDocumentStorage(request.app.state.settings).path_for(
+    settings: Settings = request.app.state.settings
+    if settings.use_mongo_storage:
+        storage = create_document_storage(database, settings)
+        if not isinstance(storage, MongoGridFSDocumentStorage):
+            raise HTTPException(status_code=503, detail="Document storage is unavailable")
+        try:
+            download = await storage.open_stream(document["storage_key"])
+        except DocumentStorageNotFoundError:
+            raise HTTPException(status_code=404, detail="Document file is unavailable") from None
+        except DocumentStorageError:
+            raise HTTPException(status_code=503, detail="Document storage is unavailable") from None
+        return StreamingResponse(
+            storage.iter_chunks(download),
+            media_type=document.get("mime_type", "application/octet-stream"),
+            headers={
+                "Content-Disposition": (
+                    "attachment; filename*=UTF-8''"
+                    + quote(document["filename"], safe="")
+                )
+            },
+        )
+
+    path = LocalDocumentStorage(settings).path_for(
         document["storage_key"]
     )
     if not path.is_file():
@@ -343,7 +398,9 @@ async def delete_document(
             group_id=str(group["_id"]),
             document_id=document_id,
         )
-        await LocalDocumentStorage(settings).delete(document["storage_key"])
+        await create_document_storage(database, settings).delete(
+            document["storage_key"]
+        )
         await database["documents"].delete_one({"_id": document["_id"]})
     except Exception as exc:
         logger.exception(

@@ -133,6 +133,20 @@ async def ensure_document_indexes(database: Database[dict[str, Any]]) -> None:
     await documents.create_index([("uploader_id", 1), ("created_at", -1)])
 
 
+async def ensure_mongo_document_storage_indexes(
+    database: Database[dict[str, Any]],
+) -> None:
+    await database["document_chunks"].create_index(
+        [("group_id", 1), ("document_id", 1), ("chunk_index", 1)],
+        unique=True,
+    )
+    await database["document_files.files"].create_index(
+        "metadata.storage_key",
+        unique=True,
+        partialFilterExpression={"metadata.storage_key": {"$type": "string"}},
+    )
+
+
 async def ensure_notification_indexes(database: Database[dict[str, Any]]) -> None:
     notifications = database["notifications"]
     await notifications.create_index(

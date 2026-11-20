@@ -1,8 +1,19 @@
 import asyncio
 import os
 from pathlib import Path
+from typing import Any, Protocol
+
+from pymongo.database import Database
 
 from app.core.config import Settings
+
+
+class DocumentStorage(Protocol):
+    async def put(self, storage_key: str, data: bytes) -> None: ...
+
+    async def read(self, storage_key: str) -> bytes: ...
+
+    async def delete(self, storage_key: str) -> None: ...
 
 
 class LocalDocumentStorage:
@@ -36,3 +47,14 @@ class LocalDocumentStorage:
                 return
 
         await asyncio.to_thread(remove)
+
+
+def create_document_storage(
+    database: Database[dict[str, Any]],
+    settings: Settings,
+) -> DocumentStorage:
+    if settings.use_mongo_storage:
+        from app.services.mongo_storage import MongoGridFSDocumentStorage
+
+        return MongoGridFSDocumentStorage(database)
+    return LocalDocumentStorage(settings)

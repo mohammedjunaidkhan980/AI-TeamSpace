@@ -234,14 +234,25 @@ Document upload and retry currently schedule processing with FastAPI in-process 
 
 | Environment variable | Purpose | Default |
 | --- | --- | --- |
-| `DOCUMENT_STORAGE_PATH` | Local document storage directory. | `./data/documents` |
-| `DOCUMENT_MAX_UPLOAD_BYTES` | Maximum bytes per upload. | `20971520` |
+| `USE_MONGO_STORAGE` | Store uploaded files in GridFS and vectors in MongoDB instead of local files and ChromaDB. | `false` |
+| `DOCUMENT_STORAGE_PATH` | Local document storage directory when Mongo storage is disabled. | `./data/documents` |
+| `DOCUMENT_MAX_UPLOAD_BYTES` | Maximum bytes per upload in local storage mode. | `20971520` |
+| `MONGO_DOCUMENT_MAX_UPLOAD_BYTES` | Additional per-file cap when Mongo storage is enabled (effective limit is the lower of this and `DOCUMENT_MAX_UPLOAD_BYTES`). | `5242880` |
+| `MONGO_VECTOR_MAX_CANDIDATES` | Maximum group-scoped chunks fetched for in-process cosine ranking. | `5000` |
 | `DOCUMENT_MAX_TEXT_CHARACTERS` | Maximum extracted text size. | `2000000` |
 | `DOCUMENT_CHUNK_SIZE` / `DOCUMENT_CHUNK_OVERLAP` | Chunking parameters. | `1200` / `150` |
-| `CHROMA_ENABLED` | Enables vector indexing and retrieval. | `false` |
+| `CHROMA_ENABLED` | Enables vector indexing and retrieval when `USE_MONGO_STORAGE=false`. | `false` |
 | `CHROMA_PERSIST_DIRECTORY` | Persistent Chroma database directory. | `./data/chroma` |
 | `CHROMA_COLLECTION_NAME` | Collection used for document vectors. | `ai_teamspace_documents` |
 | `GEMINI_EMBEDDING_MODEL` | Gemini embeddings model identifier. | `gemini-embedding-001` |
+
+### MongoDB-backed document storage
+
+Set `USE_MONGO_STORAGE=true` for a deployment with an ephemeral filesystem. The backend stores files in the `document_files` GridFS bucket and text chunks plus their Gemini embeddings in `document_chunks`. GridFS uses PyMongo's async API; MongoDB file and vector operations remain asynchronous. At startup, the backend creates the group/document/chunk uniqueness index and a unique GridFS storage-key index. Similarity ranking uses Python cosine similarity over the chunks selected by an indexed `group_id` query; it does not require Atlas Vector Search or a paid vector database. Embedding dimensions are taken from the actual Gemini response, validated for consistency, and stored with each chunk rather than assumed.
+
+When Mongo storage is enabled, ChromaDB is not initialized or queried. `USE_MONGO_STORAGE=false` retains the local file and ChromaDB implementation. Changing the setting does not migrate existing documents or alter their statuses: locally stored files and Chroma vectors remain in the local backend and are not available in Mongo mode. Migrate data explicitly before switching modes if those documents must remain accessible.
+
+Atlas M0 provides 512 MB of cluster storage shared by application collections, indexes, GridFS files/chunks, and embeddings. The Mongo-mode per-file upload cap defaults to 5 MiB; it is a protective application limit, not a guarantee of remaining Atlas capacity. Monitor Atlas storage usage. Uploads that exceed the configured size are rejected with `413`; detected storage exhaustion returns `507`, and other transient MongoDB storage failures return `503`. The query fetches at most `MONGO_VECTOR_MAX_CANDIDATES` chunks per group before ranking to bound application memory use.
 
 ## Persistent notifications
 

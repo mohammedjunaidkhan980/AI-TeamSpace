@@ -10,6 +10,7 @@ from app.api.v1.router import router as v1_router
 from app.core.config import Settings, get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging_config import configure_logging
+from app.database.indexes import ensure_mongo_document_storage_indexes
 from app.database.mongodb import create_mongo_client
 from app.services.chroma import initialize_chroma
 from app.services.nexconn import NexconnClient
@@ -40,7 +41,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.revoked_token_indexes_ready = False
     app.state.revoked_token_indexes_lock = asyncio.Lock()
     app.state.chroma_ready = False
-    if settings.chroma_enabled:
+    if settings.use_mongo_storage:
+        await ensure_mongo_document_storage_indexes(
+            client.get_database(settings.mongodb_database)
+        )
+        logger.info("MongoDB document storage initialized")
+    elif settings.chroma_enabled:
         if not (settings.gemini_api_key or settings.google_api_key).strip():
             logger.warning(
                 "ChromaDB is enabled but Gemini embedding credentials are missing"

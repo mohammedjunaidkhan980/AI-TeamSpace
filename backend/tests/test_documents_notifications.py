@@ -1,12 +1,14 @@
 import io
 from datetime import datetime, timezone
 from types import SimpleNamespace
+from typing import Any, cast
 import zipfile
 
 import httpx
 import pytest
 from bson import ObjectId
 from fastapi import FastAPI, HTTPException, UploadFile
+from pymongo.database import Database
 from pymongo.errors import DuplicateKeyError
 from starlette.datastructures import Headers
 
@@ -23,6 +25,12 @@ from app.repositories.notifications import (
 from app.services.document_processing import DocumentProcessingService
 from app.services.document_retrieval import DocumentRetrievalService
 from app.services.document_storage import LocalDocumentStorage
+from app.services.mongo_storage import (
+    DocumentStorageCapacityError,
+    DocumentStorageError,
+    MongoGridFSDocumentStorage,
+    MongoVectorStore,
+)
 from tests.test_messages import FakeCollection, FakeDatabase, auth, make_client, make_user
 
 
@@ -118,6 +126,407 @@ async def test_document_storage_rejects_path_traversal(tmp_path) -> None:
     with pytest.raises(ValueError):
         storage.path_for("../outside.txt")
 
+
+class _FakeGridFSUpload:
+    def __init__(self, database, filename: str, metadata: dict) -> None:
+        self._database = database
+        self._filename = filename
+        self._metadata = metadata
+        self._data = bytearray()
+
+    async def write(self, data: bytes) -> None:
+        self._data.extend(data)
+
+    async def close(self) -> None:
+        file_id = ObjectId()
+        self._database.gridfs_files[self._filename] = {
+            "_id": file_id,
+            "filename": self._filename,
+            "metadata": self._metadata,
+            "data": bytes(self._data),
+        }
+
+    async def abort(self) -> None:
+        self._database.gridfs_files.pop(self._filename, None)
+
+
+class _FakeGridFSDownload:
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+        self._position = 0
+        self.closed = False
+
+    async def read(self, size: int = -1) -> bytes:
+        end = len(self._data) if size < 0 else self._position + size
+        result = self._data[self._position:end]
+        self._position += len(result)
+        return result
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class _FakeGridFSBucket:
+    def __init__(self, database, *, bucket_name: str) -> None:
+        self._database = database
+        self._bucket_name = bucket_name
+
+    def open_upload_stream(self, filename: str, *, metadata: dict):
+        return _FakeGridFSUpload(self._database, filename, metadata)
+
+    async def open_download_stream_by_name(self, filename: str):
+        file = self._database.gridfs_files.get(filename)
+        if file is None:
+            from gridfs.errors import NoFile
+
+            raise NoFile("file not found")
+        return _FakeGridFSDownload(file["data"])
+
+    async def delete(self, file_id: ObjectId) -> None:
+        for filename, file in list(self._database.gridfs_files.items()):
+            if file["_id"] == file_id:
+                del self._database.gridfs_files[filename]
+                return
+
+
+class _FakeGridFSFilesCollection:
+    def __init__(self, database) -> None:
+        self._database = database
+        self.indexes: list[tuple[object, dict]] = []
+
+    async def create_index(self, keys: object, **options: object) -> str:
+        self.indexes.append((keys, options))
+        return str(keys)
+
+    async def find_one(self, query: dict, projection: dict | None = None):
+        key = query["metadata.storage_key"]
+        file = self._database.gridfs_files.get(key)
+        return {"_id": file["_id"]} if file is not None else None
+
+
+class _FakeVectorCursor:
+    def __init__(self, documents: list[dict]) -> None:
+        self.documents = documents
+        self.maximum = len(documents)
+
+    def limit(self, maximum: int):
+        self.maximum = maximum
+        return self
+
+    async def to_list(self, length: int) -> list[dict]:
+        return self.documents[: min(length, self.maximum)]
+
+
+class _FakeVectorCollection:
+    def __init__(self) -> None:
+        self.documents: list[dict] = []
+        self.indexes: list[tuple[object, dict]] = []
+        self.last_query: dict | None = None
+
+    async def create_index(self, keys: object, **options: object) -> str:
+        self.indexes.append((keys, options))
+        return str(keys)
+
+    async def bulk_write(self, operations, *, ordered: bool):
+        for operation in operations:
+            replacement = operation._doc
+            query = operation._filter
+            existing = next(
+                (
+                    index
+                    for index, document in enumerate(self.documents)
+                    if all(document.get(key) == value for key, value in query.items())
+                ),
+                None,
+            )
+            if existing is None:
+                self.documents.append(replacement.copy())
+            else:
+                self.documents[existing] = replacement.copy()
+        return SimpleNamespace()
+
+    async def delete_many(self, query: dict):
+        before = len(self.documents)
+        self.documents = [
+            document
+            for document in self.documents
+            if not (
+                document.get("group_id") == query.get("group_id")
+                and document.get("document_id") == query.get("document_id")
+                and (
+                    "chunk_index" not in query
+                    or document.get("chunk_index", -1)
+                    >= query["chunk_index"]["$gte"]
+                )
+            )
+        ]
+        return SimpleNamespace(deleted_count=before - len(self.documents))
+
+    def find(self, query: dict, projection: dict | None = None):
+        self.last_query = query
+        return _FakeVectorCursor(
+            [
+                document.copy()
+                for document in self.documents
+                if all(document.get(key) == value for key, value in query.items())
+            ]
+        )
+
+
+class _MongoTestDatabase:
+    def __init__(self) -> None:
+        self.gridfs_files: dict[str, dict] = {}
+        self.collections = {
+            "document_chunks": _FakeVectorCollection(),
+            "document_files.files": _FakeGridFSFilesCollection(self),
+        }
+
+    def __getitem__(self, name: str):
+        return self.collections[name]
+
+
+@pytest.mark.asyncio
+async def test_mongo_gridfs_round_trip_delete_and_streaming(monkeypatch) -> None:
+    import app.services.mongo_storage as mongo_storage
+
+    monkeypatch.setattr(mongo_storage, "AsyncGridFSBucket", _FakeGridFSBucket)
+    database = _MongoTestDatabase()
+    storage = MongoGridFSDocumentStorage(database)
+    content = b"stream this document in chunks"
+
+    await storage.put("file.txt", content)
+    assert await storage.read("file.txt") == content
+    download = await storage.open_stream("file.txt")
+    streamed = b"".join(
+        [chunk async for chunk in storage.iter_chunks(download, chunk_size=5)]
+    )
+    assert streamed == content
+    assert download.closed
+
+    await storage.delete("file.txt")
+    assert database.gridfs_files == {}
+
+
+@pytest.mark.asyncio
+async def test_mongo_vector_store_ranks_and_filters_by_group() -> None:
+    database = _MongoTestDatabase()
+    store = MongoVectorStore(database)
+    group_id = str(ObjectId())
+    foreign_group_id = str(ObjectId())
+    document_id = str(ObjectId())
+    chunks = [
+        {"chunk_index": 0, "text": "best match", "page_number": 2},
+        {"chunk_index": 1, "text": "second match", "page_number": 3},
+    ]
+
+    await store.upsert(
+        group_id=group_id,
+        document_id=document_id,
+        chunks=chunks,
+        embeddings=[[1.0, 0.0, 0.0], [0.7, 0.7, 0.0]],
+        filename="notes.txt",
+    )
+    await store.upsert(
+        group_id=foreign_group_id,
+        document_id=str(ObjectId()),
+        chunks=[{"chunk_index": 0, "text": "foreign", "page_number": None}],
+        embeddings=[[1.0, 0.0, 0.0]],
+        filename="foreign.txt",
+    )
+
+    matches = await store.query(
+        group_id=group_id,
+        query_embedding=[1.0, 0.0, 0.0],
+        limit=2,
+    )
+
+    assert database["document_chunks"].last_query == {"group_id": group_id}
+    assert [item["text"] for item in matches] == ["best match", "second match"]
+    assert all(item["group_id"] == group_id for item in matches)
+    assert len(database["document_chunks"].documents[0]["embedding"]) == 3
+    assert database["document_chunks"].documents[0]["metadata"][
+        "embedding_dimensions"
+    ] == 3
+
+
+@pytest.mark.asyncio
+async def test_mongo_retrieval_uses_gemini_dimension_and_group_filter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = _MongoTestDatabase()
+    group_id = str(ObjectId())
+    await MongoVectorStore(database).upsert(
+        group_id=group_id,
+        document_id=str(ObjectId()),
+        chunks=[{"chunk_index": 0, "text": "group excerpt", "page_number": 1}],
+        embeddings=[[0.0, 1.0, 0.0, 0.0]],
+        filename="group.txt",
+    )
+
+    class Embeddings:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        async def aembed_query(self, _query: str) -> list[float]:
+            return [0.0, 1.0, 0.0, 0.0]
+
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "langchain_google_genai",
+        SimpleNamespace(GoogleGenerativeAIEmbeddings=Embeddings),
+    )
+    settings = Settings(
+        _env_file=None,
+        use_mongo_storage=True,
+        gemini_api_key="test-key",
+    )
+    results = await DocumentRetrievalService(
+        settings,
+        cast(Database[dict[str, Any]], database),
+    ).retrieve(
+        group_id=group_id,
+        query="group question",
+    )
+
+    assert database["document_chunks"].last_query == {"group_id": group_id}
+    assert results == [
+        {
+            "document_id": database["document_chunks"].documents[0]["document_id"],
+            "filename": "group.txt",
+            "chunk_index": 0,
+            "page_number": 1,
+            "excerpt": "group excerpt",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_document_processing_stores_returned_embedding_dimensions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.services.mongo_storage as mongo_storage
+
+    monkeypatch.setattr(mongo_storage, "AsyncGridFSBucket", _FakeGridFSBucket)
+    database = _MongoTestDatabase()
+
+    class Embeddings:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        async def aembed_documents(self, _texts: list[str]) -> list[list[float]]:
+            return [[0.1, 0.2, 0.3, 0.4]]
+
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "langchain_google_genai",
+        SimpleNamespace(GoogleGenerativeAIEmbeddings=Embeddings),
+    )
+    settings = Settings(
+        _env_file=None,
+        use_mongo_storage=True,
+        gemini_api_key="test-key",
+    )
+    document = {
+        "_id": ObjectId(),
+        "group_id": ObjectId(),
+        "filename": "group.txt",
+    }
+
+    await DocumentProcessingService(database, settings)._store_vectors(
+        document,
+        [{"chunk_index": 0, "text": "test chunk", "page_number": None}],
+    )
+
+    stored = database["document_chunks"].documents[0]
+    assert len(stored["embedding"]) == 4
+    assert stored["metadata"]["embedding_dimensions"] == 4
+
+
+def test_cosine_similarity_handles_rank_zero_and_mismatched_dimensions() -> None:
+    cosine = MongoVectorStore.cosine_similarity
+    assert cosine([1, 0], [1, 0]) == pytest.approx(1.0)
+    assert cosine([1, 0], [0, 1]) == pytest.approx(0.0)
+    assert cosine([0, 0], [1, 0]) is None
+    assert cosine([1], [1, 0]) is None
+
+
+@pytest.mark.asyncio
+async def test_document_vector_and_gridfs_deletion_are_group_scoped(
+    monkeypatch,
+) -> None:
+    import app.services.mongo_storage as mongo_storage
+
+    monkeypatch.setattr(mongo_storage, "AsyncGridFSBucket", _FakeGridFSBucket)
+    database = _MongoTestDatabase()
+    storage = MongoGridFSDocumentStorage(database)
+    vector_store = MongoVectorStore(database)
+    group_id = str(ObjectId())
+    document_id = str(ObjectId())
+    await storage.put("file.txt", b"stored")
+    await vector_store.upsert(
+        group_id=group_id,
+        document_id=document_id,
+        chunks=[{"chunk_index": 0, "text": "stored chunk", "page_number": None}],
+        embeddings=[[0.1, 0.2, 0.3]],
+        filename="file.txt",
+    )
+    await vector_store.upsert(
+        group_id=str(ObjectId()),
+        document_id=document_id,
+        chunks=[{"chunk_index": 0, "text": "other group", "page_number": None}],
+        embeddings=[[0.1, 0.2, 0.3]],
+        filename="file.txt",
+    )
+
+    await vector_store.delete(group_id=group_id, document_id=document_id)
+    await storage.delete("file.txt")
+
+    assert len(database["document_chunks"].documents) == 1
+    assert database["document_chunks"].documents[0]["text"] == "other group"
+    assert database.gridfs_files == {}
+
+
+@pytest.mark.asyncio
+async def test_mongo_upload_limit_uses_the_mongo_specific_cap() -> None:
+    settings = Settings(
+        _env_file=None,
+        use_mongo_storage=True,
+        document_max_upload_bytes=100,
+        mongo_document_max_upload_bytes=3,
+    )
+    with pytest.raises(HTTPException) as error:
+        await _validate_upload(_upload("notes.txt", b"four", "text/plain"), settings)
+    assert error.value.status_code == 413
+
+
+@pytest.mark.asyncio
+async def test_mongo_gridfs_capacity_errors_are_reported_without_raw_details(
+    monkeypatch,
+) -> None:
+    import app.services.mongo_storage as mongo_storage
+    from pymongo.errors import OperationFailure
+
+    class FullBucket(_FakeGridFSBucket):
+        def open_upload_stream(self, filename: str, *, metadata: dict):
+            raise OperationFailure("Free tier storage limit reached")
+
+    monkeypatch.setattr(mongo_storage, "AsyncGridFSBucket", FullBucket)
+    with pytest.raises(DocumentStorageCapacityError):
+        await MongoGridFSDocumentStorage(_MongoTestDatabase()).put(
+            "file.txt",
+            b"document",
+        )
+
+    class BrokenBucket(_FakeGridFSBucket):
+        def open_upload_stream(self, filename: str, *, metadata: dict):
+            raise OperationFailure("temporary database failure")
+
+    monkeypatch.setattr(mongo_storage, "AsyncGridFSBucket", BrokenBucket)
+    with pytest.raises(DocumentStorageError):
+        await MongoGridFSDocumentStorage(_MongoTestDatabase()).put(
+            "file.txt",
+            b"document",
+        )
 
 def test_document_chunking_preserves_configured_overlap() -> None:
     chunks = DocumentProcessingService._chunk_pages(
@@ -485,3 +894,117 @@ async def test_notification_api_lists_reads_and_deletes_only_recipient_items(
             headers=auth(tokens["alice"]),
         )
         assert removed.status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_mongo_document_api_streams_downloads_and_preserves_retry_flow(
+    api_context,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.services.mongo_storage as mongo_storage
+
+    app, database, tokens, group = api_context
+    settings = main.get_settings()
+    settings.use_mongo_storage = True
+    settings.chroma_enabled = True
+    database.collections["documents"] = _RouteCollection()
+    database.collections["document_chunks"] = _FakeVectorCollection()
+    database.gridfs_files = {}
+    database.collections["document_files.files"] = _FakeGridFSFilesCollection(
+        database
+    )
+    monkeypatch.setattr(mongo_storage, "AsyncGridFSBucket", _FakeGridFSBucket)
+    monkeypatch.setattr(
+        main,
+        "initialize_chroma",
+        lambda *_args: pytest.fail("Chroma must not initialize in Mongo storage mode"),
+    )
+
+    class MongoClient:
+        def get_database(self, _name: str):
+            return database
+
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(main, "create_mongo_client", lambda _settings: MongoClient())
+
+    async with make_client(app) as client:
+        uploaded = await client.post(
+            f"/api/v1/groups/{group['_id']}/documents",
+            headers=auth(tokens["alice"]),
+            files={"file": ("team.txt", b"Mongo-backed document", "text/plain")},
+        )
+        assert uploaded.status_code == 202
+        document = uploaded.json()
+
+        await MongoVectorStore(database).upsert(
+            group_id=str(group["_id"]),
+            document_id=document["document_id"],
+            chunks=[
+                {
+                    "chunk_index": 0,
+                    "text": "Mongo-backed chunk",
+                    "page_number": None,
+                }
+            ],
+            embeddings=[[0.2, 0.4, 0.6]],
+            filename=document["filename"],
+        )
+
+        database["documents"].documents[0]["status"] = "failed"
+        retried = await client.post(
+            f"/api/v1/documents/{document['document_id']}/retry",
+            headers=auth(tokens["alice"]),
+        )
+        assert retried.status_code == 200
+        assert retried.json()["status"] == "pending"
+
+        downloaded = await client.get(
+            f"/api/v1/documents/{document['document_id']}/download",
+            headers=auth(tokens["alice"]),
+        )
+        assert downloaded.status_code == 200
+        assert downloaded.content == b"Mongo-backed document"
+        assert "filename*=UTF-8''team.txt" in downloaded.headers[
+            "content-disposition"
+        ]
+
+        removed = await client.delete(
+            f"/api/v1/documents/{document['document_id']}",
+            headers=auth(tokens["alice"]),
+        )
+        assert removed.status_code == 204
+
+        from pymongo.errors import OperationFailure
+
+        class FullBucket(_FakeGridFSBucket):
+            def open_upload_stream(self, filename: str, *, metadata: dict):
+                raise OperationFailure("Free tier storage limit reached")
+
+        monkeypatch.setattr(mongo_storage, "AsyncGridFSBucket", FullBucket)
+        full = await client.post(
+            f"/api/v1/groups/{group['_id']}/documents",
+            headers=auth(tokens["alice"]),
+            files={"file": ("full.txt", b"capacity", "text/plain")},
+        )
+        assert full.status_code == 507
+        assert full.json()["detail"] == "Document storage capacity is exhausted"
+
+        class UnavailableBucket(_FakeGridFSBucket):
+            def open_upload_stream(self, filename: str, *, metadata: dict):
+                raise OperationFailure("temporary database failure")
+
+        monkeypatch.setattr(mongo_storage, "AsyncGridFSBucket", UnavailableBucket)
+        unavailable = await client.post(
+            f"/api/v1/groups/{group['_id']}/documents",
+            headers=auth(tokens["alice"]),
+            files={"file": ("retry.txt", b"retry", "text/plain")},
+        )
+        assert unavailable.status_code == 503
+        assert unavailable.json()["detail"] == (
+            "Document storage is temporarily unavailable"
+        )
+
+    assert database["document_chunks"].documents == []
+    assert database.gridfs_files == {}

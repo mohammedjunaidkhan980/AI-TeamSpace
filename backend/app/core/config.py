@@ -34,6 +34,13 @@ class Settings(BaseSettings):
     document_max_text_characters: int = Field(default=2_000_000, ge=1000, le=10_000_000)
     document_chunk_size: int = Field(default=1200, ge=200, le=8000)
     document_chunk_overlap: int = Field(default=150, ge=0, le=1000)
+    use_mongo_storage: bool = False
+    mongo_document_max_upload_bytes: int = Field(
+        default=5 * 1024 * 1024,
+        ge=1,
+        le=20 * 1024 * 1024,
+    )
+    mongo_vector_max_candidates: int = Field(default=5000, ge=1, le=50000)
     chroma_enabled: bool = False
     chroma_persist_directory: str = "./data/chroma"
     chroma_collection_name: str = "ai_teamspace_documents"

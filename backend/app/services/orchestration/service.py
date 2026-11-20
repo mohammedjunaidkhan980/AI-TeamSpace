@@ -208,7 +208,8 @@ class OrchestrationMessageProcessor:
             )
             try:
                 document_context = await DocumentRetrievalService(
-                    self._settings
+                    self._settings,
+                    self._database,
                 ).retrieve(
                     group_id=str(run["group_id"]),
                     query=message["content"],

@@ -335,7 +335,7 @@ async def test_orchestration_preserves_retrieved_citations(monkeypatch) -> None:
     ]
 
     class RetrievalService:
-        def __init__(self, _settings: Settings) -> None:
+        def __init__(self, _settings: Settings, _database: object) -> None:
             pass
 
         async def retrieve(self, *, group_id: str, query: str) -> list[dict]:

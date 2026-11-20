@@ -111,9 +111,13 @@ Set `GEMINI_API_KEY` or `GOOGLE_API_KEY` in the backend environment. `GEMINI_MOD
 
 Nexconn is disabled by default. To enable it, obtain the App Key, App Secret, and API base URL assigned to your Nexconn application, then set `NEXCONN_ENABLED=true` and those values in `backend/.env`. The backend uses the App Secret for server-side requests. Never add it to the frontend environment, source code, logs, or this repository. Do not guess an API origin; use the one supplied for your application.
 
-### ChromaDB and document storage
+### Document storage and retrieval
 
-Embedded ChromaDB is configured with `CHROMA_ENABLED`, `CHROMA_PERSIST_DIRECTORY`, and `CHROMA_COLLECTION_NAME`. Document files are stored under `DOCUMENT_STORAGE_PATH`. The example defaults store both under `backend/data/`; these runtime files and user uploads are ignored by Git and are not deleted by repository setup. Gemini credentials are needed to create embeddings and process documents. Retrieval is scoped to the current group.
+For local development, set `USE_MONGO_STORAGE=false` to keep uploaded files under `DOCUMENT_STORAGE_PATH` and use embedded ChromaDB configured by `CHROMA_ENABLED`, `CHROMA_PERSIST_DIRECTORY`, and `CHROMA_COLLECTION_NAME`.
+
+For deployments without a persistent filesystem, set `USE_MONGO_STORAGE=true`. Files are stored in MongoDB GridFS and embeddings/chunks in MongoDB's `document_chunks` collection; Gemini remains the embedding provider. The example caps MongoDB-backed uploads at 5 MiB (`MONGO_DOCUMENT_MAX_UPLOAD_BYTES`) and limits each in-memory group search to `MONGO_VECTOR_MAX_CANDIDATES` chunks. Retrieval applies the group filter in MongoDB before cosine ranking.
+
+Atlas M0 has a 512 MB total storage limit. GridFS files, chunks, embeddings, indexes, and the rest of the application all use that same quota; the per-file cap does not guarantee available quota. Monitor Atlas storage and delete/archive documents before the free-tier limit is reached. MongoDB storage errors are returned as service-unavailable or insufficient-storage responses. Switching this flag does not migrate or delete existing local documents; records and files already stored locally remain in local storage and are not visible through MongoDB mode.
 
 ## Tests and checks
 

@@ -11,7 +11,8 @@ from pymongo.database import Database
 from app.core.config import Settings
 from app.repositories.documents import get_document, set_document_status
 from app.services.chroma import get_chroma_client, get_chroma_collection
-from app.services.document_storage import LocalDocumentStorage
+from app.services.document_storage import DocumentStorage, create_document_storage
+from app.services.mongo_storage import MongoVectorStore
 from app.services.notifications import notify_user_best_effort
 
 logger = logging.getLogger(__name__)
@@ -26,11 +27,11 @@ class DocumentProcessingService:
         self,
         database: Database[dict[str, Any]],
         settings: Settings,
-        storage: LocalDocumentStorage | None = None,
+        storage: DocumentStorage | None = None,
     ) -> None:
         self._database = database
         self._settings = settings
-        self._storage = storage or LocalDocumentStorage(settings)
+        self._storage = storage or create_document_storage(database, settings)
 
     async def process(self, document_id: str) -> None:
         if not ObjectId.is_valid(document_id):
@@ -101,7 +102,7 @@ class DocumentProcessingService:
         document: dict[str, Any],
         chunks: list[dict[str, Any]],
     ) -> None:
-        if not self._settings.chroma_enabled:
+        if not self._settings.use_mongo_storage and not self._settings.chroma_enabled:
             raise DocumentProcessingError("Vector search is not enabled")
         api_key = self._settings.gemini_api_key or self._settings.google_api_key
         if not api_key:
@@ -116,6 +117,28 @@ class DocumentProcessingService:
             google_api_key=api_key,
         )
         vectors = await embeddings.aembed_documents([item["text"] for item in chunks])
+        if not vectors or not vectors[0]:
+            raise DocumentProcessingError("Embedding provider returned empty vectors")
+        if self._settings.use_mongo_storage:
+            await MongoVectorStore(
+                self._database,
+                max_candidates=self._settings.mongo_vector_max_candidates,
+            ).upsert(
+                group_id=str(document["group_id"]),
+                document_id=str(document["_id"]),
+                chunks=chunks,
+                embeddings=vectors,
+                filename=document["filename"],
+            )
+            logger.info(
+                "Document embeddings stored in MongoDB",
+                extra={
+                    "document_id": str(document["_id"]),
+                    "chunk_count": len(vectors),
+                    "embedding_dimensions": len(vectors[0]),
+                },
+            )
+            return
         collection = await asyncio.to_thread(
             get_chroma_collection, self._settings
         )
@@ -139,6 +162,12 @@ class DocumentProcessingService:
         )
 
     async def delete_vectors(self, *, group_id: str, document_id: str) -> None:
+        if self._settings.use_mongo_storage:
+            await MongoVectorStore(
+                self._database,
+                max_candidates=self._settings.mongo_vector_max_candidates,
+            ).delete(group_id=group_id, document_id=document_id)
+            return
         if not self._settings.chroma_enabled:
             return
         client = await asyncio.to_thread(get_chroma_client, self._settings)
