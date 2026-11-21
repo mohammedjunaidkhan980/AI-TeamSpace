@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from pymongo.errors import DuplicateKeyError
 
 import app.main as main
+import app.api.v1.endpoints.messages as message_endpoints
 from app.core.config import Settings
 from app.core.security import create_access_token
 from app.database.mongodb import get_database
@@ -675,9 +676,17 @@ async def test_sender_can_delete_and_invalid_auth_is_rejected(message_app) -> No
 
 
 @pytest.mark.asyncio
-async def test_ai_messages_run_orchestration_and_preserve_processing_event(message_app) -> None:
+async def test_plain_messages_do_not_run_orchestration_automatically(message_app) -> None:
     app, database, _, settings = message_app
     database["groups"].documents[0]["ai_agents"] = [{"agent_id": "agent"}]
+    database["agents"].documents.append(
+        {
+            "_id": ObjectId(),
+            "group_id": database["groups"].documents[0]["_id"],
+            "name": "Research",
+            "enabled": True,
+        }
+    )
     alice_id = str(database["users"].documents[0]["_id"])
     async with make_client(app) as client:
         response = await client.post(
@@ -685,8 +694,6 @@ async def test_ai_messages_run_orchestration_and_preserve_processing_event(messa
             json=webhook_payload(alice_id, "ai-trigger", "Ask AI", "evt-ai"),
             headers=webhook_headers(settings),
         )
-        assert database["messages"].documents[0]["ai_processing_status"] == "not_required"
-        assert database["message_processing_events"].documents[0]["status"] == "completed"
         deleted = await client.delete(
             f"/api/v1/messages/{database['messages'].documents[0]['_id']}",
             headers=auth(
@@ -699,8 +706,51 @@ async def test_ai_messages_run_orchestration_and_preserve_processing_event(messa
 
     assert response.status_code == 200
     message = database["messages"].documents[0]
-    assert len(database["message_processing_events"].documents) == 1
     assert message["ai_processing_status"] == "not_required"
-    assert database["message_processing_events"].documents[0]["status"] == "completed"
-    assert database["orchestration_runs"].documents[0]["status"] == "completed"
+    assert database["message_processing_events"].documents == []
+    assert database["orchestration_runs"].documents == []
     assert deleted.status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_webhook_runs_enabled_agent_only_for_mention(
+    message_app, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app, database, _, settings = message_app
+    group = database["groups"].documents[0]
+    group["ai_agents"] = [{"agent_id": "research", "enabled": True}]
+    database["agents"].documents.append(
+        {
+            "_id": ObjectId(),
+            "group_id": group["_id"],
+            "name": "Research",
+            "enabled": True,
+        }
+    )
+
+    class MockProcessor:
+        async def process(self, message: dict) -> str:
+            assert "@Research" in message["content"]
+            return "completed"
+
+    monkeypatch.setattr(
+        message_endpoints,
+        "OrchestrationMessageProcessor",
+        lambda *args, **kwargs: MockProcessor(),
+    )
+    alice_id = str(database["users"].documents[0]["_id"])
+    async with make_client(app) as client:
+        response = await client.post(
+            "/api/v1/webhooks/nexconn/messages",
+            json=webhook_payload(
+                alice_id,
+                "mention-trigger",
+                "@Research summarize the plan",
+                "evt-mention",
+            ),
+            headers=webhook_headers(settings),
+        )
+
+    assert response.status_code == 200
+    assert database["messages"].documents[0]["ai_processing_status"] == "completed"
+    assert database["message_processing_events"].documents[0]["status"] == "completed"

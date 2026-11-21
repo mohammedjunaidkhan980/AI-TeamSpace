@@ -272,8 +272,9 @@ def _database_with_message(agent_count: int = 2):
     database = FakeDatabase(users, group)
     agents = [_agent(group["_id"], f"Agent {index}") for index in range(agent_count)]
     database["agents"].documents.extend(agents)
-    message = _message(group, users[1])
-    database["messages"].documents.append(message)
+    plain_message = _message(group, users[1], "Please summarize this")
+    message = _message(group, users[1], "@Research Agent summarize this")
+    database["messages"].documents.extend([plain_message, message])
     return database, users, group, agents, message
 
 
@@ -573,8 +574,9 @@ async def test_manual_processing_endpoint_checks_membership_and_returns_status(
     database = FakeDatabase(users, group)
     agent = _agent(group["_id"], "Research Agent")
     database["agents"].documents.append(agent)
-    message = _message(group, users[1])
-    database["messages"].documents.append(message)
+    plain_message = _message(group, users[1], "Please summarize this")
+    message = _message(group, users[1], "@Research Agent summarize this")
+    database["messages"].documents.extend([plain_message, message])
     settings = _settings()
     monkeypatch.setattr(main, "get_settings", lambda: settings)
     provider = MockProvider(_plan([agent]))
@@ -595,6 +597,10 @@ async def test_manual_processing_endpoint_checks_membership_and_returns_status(
     }
 
     async with _client(app) as client:
+        plain_rejected = await client.post(
+            f"/api/v1/groups/{group['_id']}/messages/{plain_message['_id']}/ai-process",
+            headers=_auth(tokens["bob"]),
+        )
         queued = await client.post(
             f"/api/v1/groups/{group['_id']}/messages/{message['_id']}/ai-process",
             headers=_auth(tokens["bob"]),
@@ -640,6 +646,7 @@ async def test_manual_processing_endpoint_checks_membership_and_returns_status(
             headers=_auth(tokens["bob"]),
         )
 
+    assert plain_rejected.status_code == 422
     assert queued.status_code == 202
     assert outsider.status_code == 403
     assert status_response.status_code == 200

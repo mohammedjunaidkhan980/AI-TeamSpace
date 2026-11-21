@@ -270,6 +270,7 @@ export function GroupChatPanel({ group }: { group: GroupDetails }) {
                       message={message}
                       currentUserId={currentUserId}
                       isAdmin={isAdmin}
+                      enabledAgentNames={enabledAgents.map((agent) => agent.name)}
                       onDelete={() => setDeleteTarget(message)}
                       onProcess={() => processMutation.mutate(message.message_id)}
                       onRetry={() => retryMessageMutation.mutate(message.message_id)}
@@ -391,6 +392,7 @@ function MessageItem({
   message,
   currentUserId,
   isAdmin,
+  enabledAgentNames,
   onDelete,
   onProcess,
   onRetry,
@@ -400,6 +402,7 @@ function MessageItem({
   message: MessageResponse;
   currentUserId: string;
   isAdmin: boolean;
+  enabledAgentNames: string[];
   onDelete: () => void;
   onProcess: () => void;
   onRetry: () => void;
@@ -409,8 +412,12 @@ function MessageItem({
   const isAgent = message.sender.type === "agent";
   const isOwn = message.sender.id === currentUserId;
   const canDelete = !message.is_deleted && (isOwn || isAdmin);
+  const mentionsEnabledAgent = enabledAgentNames.some((name) =>
+    new RegExp(`@${escapeRegExp(name)}(?![\\w])`, "i").test(message.content),
+  );
   const canProcess = !message.is_deleted &&
     !processed &&
+    mentionsEnabledAgent &&
     (message.ai_processing_status === "not_required" ||
       (message.ai_processing_status === "pending" && message.delivery_status === "failed")) &&
     message.sender.type === "user" &&
@@ -597,4 +604,8 @@ function formatDay(value: string) {
   yesterday.setDate(today.getDate() - 1);
   if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
   return date.toLocaleDateString(undefined, { month: "long", day: "numeric", year: date.getFullYear() === today.getFullYear() ? undefined : "numeric" });
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

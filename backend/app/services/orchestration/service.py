@@ -36,18 +36,26 @@ from app.services.nexconn import NexconnClient
 logger = logging.getLogger(__name__)
 MODEL_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 GROUP_CONTEXT_KEYS = {"language", "timezone", "response_style"}
-MENTION_PATTERN = re.compile(r"@([\w ]+?)(?=\s|$|[^\w ])")
-
-
-def _resolve_mentions(
+def resolve_agent_mentions(
     content: str, agents: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
     """Return agents explicitly @mentioned in the message, preserving order."""
-    name_map = {a["name"].lower(): a for a in agents}
+    name_map = {
+        agent["name"].strip().lower(): agent
+        for agent in agents
+        if isinstance(agent.get("name"), str) and agent["name"].strip()
+    }
+    if not name_map:
+        return []
+    names = sorted(name_map, key=len, reverse=True)
+    mention_pattern = re.compile(
+        r"@(?P<name>" + "|".join(re.escape(name) for name in names) + r")(?=$|[^\w])",
+        re.IGNORECASE,
+    )
     seen: set[str] = set()
     result: list[dict[str, Any]] = []
-    for match in MENTION_PATTERN.finditer(content):
-        key = match.group(1).strip().lower()
+    for match in mention_pattern.finditer(content):
+        key = match.group("name").strip().lower()
         if key in name_map and key not in seen:
             seen.add(key)
             result.append(name_map[key])
@@ -199,7 +207,7 @@ class OrchestrationMessageProcessor:
                 run["group_id"],
             )
             agent_context = [self._agent_context(agent) for agent in agents]
-            mentioned = _resolve_mentions(message["content"], agent_context)
+            mentioned = resolve_agent_mentions(message["content"], agent_context)
             history, _ = await get_group_message_history(
                 self._database,
                 group_id=run["group_id"],

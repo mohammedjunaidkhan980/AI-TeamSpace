@@ -22,6 +22,7 @@ from pymongo.database import Database
 
 from app.core.security import get_current_user
 from app.database.mongodb import get_database
+from app.repositories.agents import list_enabled_group_agents
 from app.repositories.groups import get_group, get_member_role, valid_object_id
 from app.repositories.messages import (
     create_message,
@@ -52,7 +53,10 @@ from app.schemas.orchestration import (
     OrchestrationAccepted,
     OrchestrationRunResponse,
 )
-from app.services.orchestration import OrchestrationMessageProcessor
+from app.services.orchestration.service import (
+    OrchestrationMessageProcessor,
+    resolve_agent_mentions,
+)
 from pymongo import ReturnDocument
 from app.services.messaging import AIMessageDeliveryService
 from app.services.notifications import notify_group_members_best_effort
@@ -79,6 +83,15 @@ async def _group_for_member(
     if role is None:
         raise HTTPException(status_code=403, detail="Group membership required")
     return group, role
+
+
+async def _mentioned_enabled_agents(
+    database: Database[dict[str, Any]],
+    group: dict[str, Any],
+    content: str,
+) -> list[dict[str, Any]]:
+    agents = await list_enabled_group_agents(database, group["_id"])
+    return resolve_agent_mentions(content, agents)
 
 
 def _response_message(message: dict[str, Any]) -> MessageResponse:
@@ -368,6 +381,11 @@ async def queue_message_orchestration(
             status_code=409,
             detail="Only active human messages can be AI-processed",
         )
+    if not await _mentioned_enabled_agents(database, group, message["content"]):
+        raise HTTPException(
+            status_code=422,
+            detail="Mention an enabled AI agent with @ to process this message",
+        )
     if message.get("ai_processing_status") == "processing":
         raise HTTPException(status_code=409, detail="Message is already processing")
 
@@ -467,6 +485,9 @@ async def send_group_message(
     user = await get_user_by_id(database, current_user.id)
     if user is None:
         raise HTTPException(status_code=401, detail="Authenticated user not found")
+    mentioned_agents = await _mentioned_enabled_agents(
+        database, group, payload.content
+    )
     message, _ = await create_message(
         database,
         group_id=group["_id"],
@@ -481,7 +502,7 @@ async def send_group_message(
         reply_to_message_id=reply_to["_id"] if reply_to else None,
         metadata={},
         created_at=datetime.now(timezone.utc),
-        ai_processing_status="pending" if group.get("ai_agents") else "not_required",
+        ai_processing_status="pending" if mentioned_agents else "not_required",
         delivery_status="pending",
         delivery_retry_count=0,
         idempotency_key=idempotency_key,
@@ -727,7 +748,12 @@ async def _persist_nexconn_message(
         raise HTTPException(status_code=403, detail="Message sender is not authorized")
 
     is_agent_message = event_data.ai_generated is True
-    should_process = bool(group.get("ai_agents")) and not is_agent_message
+    mentioned_agents = (
+        await _mentioned_enabled_agents(database, group, content)
+        if not is_agent_message and message_type == "text"
+        else []
+    )
+    should_process = bool(mentioned_agents)
     message, created = await create_message(
         database,
         group_id=group["_id"],
