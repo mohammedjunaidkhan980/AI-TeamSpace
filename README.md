@@ -2,6 +2,16 @@
 
 AI TeamSpace is a collaborative workspace where people can work in groups, communicate through group chat, and ask specialized AI agents to help with group tasks. It combines a React web application with a FastAPI API, MongoDB persistence, optional Nexconn chat delivery, and optional Gemini-powered agent orchestration and document retrieval.
 
+## Team
+
+These GitHub collaborators have been invited to the repository; their invitations are pending.
+
+| Team member | GitHub profile | Status |
+| --- | --- | --- |
+| bhargavisingireddy007-ops | [@bhargavisingireddy007-ops](https://github.com/bhargavisingireddy007-ops) | Pending invite |
+| SHOVIN A W | [@Shovin123](https://github.com/Shovin123) | Pending invite |
+| VENU H L | [@venuhl](https://github.com/venuhl) | Pending invite |
+
 ## How to use AI TeamSpace
 
 1. **Register and sign in.** Create an account with your name, username, email, and password, then sign in to open your workspace.
