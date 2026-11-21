@@ -2,16 +2,68 @@
 
 AI TeamSpace is a collaborative workspace where people can work in groups, communicate through group chat, and ask specialized AI agents to help with group tasks. It combines a React web application with a FastAPI API, MongoDB persistence, optional Nexconn chat delivery, and optional Gemini-powered agent orchestration and document retrieval.
 
-## Features
+## How to use AI TeamSpace
 
-- Account registration, login, and authenticated user profiles.
-- Groups, member roles, connections, and group-scoped permissions.
-- Group chat backed by Nexconn, with messages persisted by the backend.
-- Group AI-agent templates, enable/disable management, and LangGraph orchestration.
-- Group document uploads, processing, ChromaDB retrieval, and source citations.
-- Notifications and responsive dashboard/workspace pages.
+1. **Register and sign in.** Create an account with your name, username, email, and password, then sign in to open your workspace.
+2. **Create or join a group.** When you create a group, you become its admin. You can add existing connections while creating it or later from group member settings. To join someone else's group, send a connection request to its admin; after the connection is accepted, ask the admin to add you. There is no direct group join-request button yet.
+3. **Chat with the group.** Members can exchange real-time messages in the group chat. Message history is persisted by the backend, so it remains available when you return. Admins can add multiple accepted connections; member additions are submitted in batches of up to 100.
+4. **Share documents.** Any group member can upload a PDF, TXT, or DOCX file. TeamSpace processes it in the background. Once indexing completes, relevant excerpts can be retrieved to help answer group questions; the configured upload-size limit applies.
+5. **Use AI teammates.** Group admins choose which agents are enabled. In group chat, type `@` and select an agent, such as Research, to direct a request. The coordinator can also assign broader requests to relevant enabled agents. When matching document excerpts are available, they may be included as context and sources.
 
-AI orchestration and document embeddings require Google Gemini credentials. Nexconn chat requires credentials and an API origin assigned to your Nexconn application. These integrations are configured on the backend; secrets must never be placed in frontend environment variables.
+AI responses and document embeddings require Google Gemini credentials. Real-time chat requires Nexconn to be enabled and configured on the backend. These integrations are optional for starting the app; keep all service secrets out of frontend variables.
+
+## Technology used
+
+- **Frontend:** React, Vite, TypeScript, Tailwind CSS, React Router, TanStack Query, Axios, Zustand, and Lucide.
+- **Backend:** Python 3.12+, FastAPI, Pydantic v2, PyMongo's asynchronous client, and Pytest.
+- **Application data and files:** MongoDB; uploaded files use local storage or MongoDB GridFS, depending on configuration.
+- **AI and retrieval:** Google Gemini for language generation and embeddings, LangGraph for agent orchestration, and ChromaDB or MongoDB vector search depending on deployment configuration.
+- **Chat:** Nexconn browser SDK for authenticated sessions and message events, plus a backend Nexconn integration for group channels and message delivery.
+
+## Run locally
+
+### Prerequisites
+
+- Python 3.12 or newer.
+- Node.js and npm.
+- MongoDB, running locally or available through a MongoDB connection string.
+- Gemini credentials for AI responses and document embeddings. Optional for app startup.
+- Nexconn App Key, App Secret, and assigned API origin for real-time chat. Optional for app startup.
+
+### 1. Set up the backend
+
+From the repository root, in PowerShell:
+
+```powershell
+cd backend
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+Copy-Item .env.example .env
+```
+
+Edit `backend/.env` and set `MONGODB_URL` and `MONGODB_DATABASE`. Replace `JWT_SECRET_KEY` with a strong random secret. Add `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) for AI features. To enable Nexconn, set `NEXCONN_ENABLED=true` and provide the Nexconn values assigned to your application. Never commit `.env` or put backend secrets in frontend variables.
+
+Start the API from the `backend` directory:
+
+```powershell
+uvicorn app.main:app --reload
+```
+
+The API is at <http://localhost:8000>, Swagger UI at <http://localhost:8000/docs>, and the health check at <http://localhost:8000/api/v1/health>.
+
+### 2. Set up the frontend
+
+In a second terminal, from the repository root:
+
+```powershell
+cd frontend
+npm install
+Copy-Item .env.example .env
+npm run dev
+```
+
+Open <http://localhost:5173>. Set `VITE_API_BASE_URL` in `frontend/.env` to the backend origin (default `http://localhost:8000`). Only public configuration belongs in `VITE_*` variables; never put Gemini, Nexconn, JWT, or database secrets there.
 
 ## Project structure
 
@@ -38,62 +90,6 @@ AI-TeamSpace/
     ├── .env.example
     └── package.json
 ```
-
-## Technology
-
-- **Frontend:** React, Vite, TypeScript, Tailwind CSS, React Router, TanStack Query, Axios, Zustand, and Lucide.
-- **Backend:** Python 3.12+, FastAPI, Pydantic v2, PyMongo's async client, and Pytest.
-- **Data and AI:** MongoDB, Google Gemini, LangGraph, and embedded ChromaDB.
-- **Chat:** Nexconn server API and the Nexconn browser SDK.
-
-## Local setup
-
-### Prerequisites
-
-- Python 3.12 or newer.
-- Node.js and npm.
-- MongoDB, running locally or available through a MongoDB connection string.
-- Google Gemini API credentials for text generation and/or document embeddings.
-- Nexconn application credentials and its assigned API origin to enable Nexconn chat. Nexconn is optional for local startup.
-
-### Backend
-
-In PowerShell:
-
-```powershell
-cd backend
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-Copy-Item .env.example .env
-```
-
-Edit `backend/.env` locally. Set `MONGODB_URL` and `MONGODB_DATABASE`, and replace the empty `JWT_SECRET_KEY` with a randomly generated secret (for example, generate one with `python -c "import secrets; print(secrets.token_urlsafe(48))"`). Never commit `.env`.
-
-Start the API from the `backend` directory:
-
-```powershell
-uvicorn app.main:app --reload
-```
-
-- API: <http://localhost:8000>
-- Swagger UI: <http://localhost:8000/docs>
-- Health check: <http://localhost:8000/api/v1/health>
-
-The health endpoint reports MongoDB connectivity. The backend can start without Nexconn; Gemini-dependent features need a configured Google API key.
-
-### Frontend
-
-In a second terminal:
-
-```powershell
-cd frontend
-npm install
-Copy-Item .env.example .env
-npm run dev
-```
-
-The local application is served at <http://localhost:5173>. `VITE_API_BASE_URL` in `frontend/.env` should point to the backend origin (default `http://localhost:8000`). Only public frontend configuration belongs in `VITE_*` variables; do not put Gemini, Nexconn, JWT, or database secrets there.
 
 ## Integration configuration
 

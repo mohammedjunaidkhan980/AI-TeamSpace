@@ -1,0 +1,46 @@
+AI TEAMSPACE - FULL PRODUCT DEMO SCRIPT
+Estimated runtime: 3 minutes 40 seconds
+
+0:00-0:30 | Introduce the product and purpose
+On screen: Open the live AI TeamSpace landing or sign-in page. Show the product name.
+
+Voiceover:
+Welcome to AI TeamSpace, a shared workspace where teams can bring conversations, documents, and AI assistance together. We built it to solve a familiar problem: important context gets scattered across chat threads, files, and separate AI tools. People waste time repeating themselves or searching for information. AI TeamSpace keeps that work connected to the group, instead of asking every person to rebuild the context from scratch.
+
+0:30-1:00 | Registration and login
+On screen: Show the registration form, submit a demo account, then show login and the dashboard.
+
+Voiceover:
+New users can create an account with the registration form, then securely sign in to their workspace. The dashboard gives each person a starting point for their groups and activity. After login, users only see the groups and information their membership allows them to access. Profiles and group roles help keep each person's workspace tied to the right account.
+
+1:00-1:40 | Group chat between users
+On screen: Show two demo users in the same group, ideally in two browser profiles. Send a message from one and show it appear in the other user's group chat.
+
+Voiceover:
+Here is a group conversation between two people. One member sends a message, and the other sees it in the shared group history. Messages are persisted in TeamSpace, making it easier to follow the conversation later. Nexconn powers the live chat connection. The browser SDK authenticates the signed-in user, reports connection status, and notifies TeamSpace when new or synchronized messages arrive. The backend handles group channels, member sync, message delivery, and webhook persistence.
+
+1:40-2:10 | Interact with an AI agent
+On screen: Mention an enabled agent, such as Research, and ask it a focused question. Show the Thinking indicator and then the response.
+
+Voiceover:
+AI teammates can help with focused work like research, writing, coding, data analysis, and project planning. A member can mention an enabled agent directly, while the coordinator can route broader requests to the right specialists. Group admins choose which agents are active, and each agent follows its configured role. While the request is processing, TeamSpace shows a Thinking status. The completed response is formatted to be easy to scan.
+
+2:10-2:50 | Upload a document and demonstrate RAG
+On screen: Upload a sample PDF to the group's Documents panel. Show its processing status, wait for completion, then ask a question whose answer is in the PDF. Point to the source excerpt or citation.
+
+Voiceover:
+Next, a group member uploads a PDF to shared documents. TeamSpace extracts and indexes its text in the background. This is retrieval-augmented generation, or RAG: when someone asks a question, the system searches for relevant group document excerpts and supplies them as context to the AI. It looks up useful passages rather than attaching every file to every request. When a relevant source is found, the response can show where that information came from. The document is shared group context, not limited to its uploader.
+
+2:50-3:20 | Technology stack
+On screen: Show a simple stack card with the technologies named below.
+
+Voiceover:
+The frontend is built with React, Vite, and TypeScript. The API uses Python and FastAPI, with MongoDB for application data. Nexconn supports real-time chat. LangGraph coordinates AI agents, and Gemini powers language generation and embeddings. Depending on deployment configuration, document vectors are stored and searched with ChromaDB or MongoDB.
+
+3:20-3:45 | Live deployed application and close
+On screen: Return to the live production app. Show the completed group chat, agent response, document citation, and production URL in the browser bar.
+
+Voiceover:
+This is AI TeamSpace running as a live deployed application. From account creation to group chat, AI agents, and document-grounded answers, the goal is simple: keep team context in one place and make it easier to turn that context into action. Notifications help members keep up with group activity after they leave the conversation. Thanks for watching.
+
+Recording note: Use demo accounts and sample documents. Do not show passwords, API keys, the Nexconn App Secret, or other credentials on screen.

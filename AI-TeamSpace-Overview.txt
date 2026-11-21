@@ -1,0 +1,40 @@
+AI TEAMSPACE
+Your group chat finally has the context.
+
+WHY WE BUILT IT
+Teams do their best work across conversations, documents, and specialist tools. But when those pieces live in separate places, context gets lost: people repeat questions, hunt for the latest file, and try to give a generic chatbot the backstory it needs. We built AI TeamSpace to bring group conversation, shared knowledge, and useful AI teammates into one workspace.
+
+THE PROBLEM IT SOLVES
+AI TeamSpace reduces context switching and repeated work. Group discussions and shared documents stay connected, while specialized AI agents can help with research, writing, coding, data analysis, and project coordination. Answers can use relevant group document excerpts instead of starting from zero.
+
+TECH STACK
+Frontend: React, Vite, TypeScript, Tailwind CSS, React Router, TanStack Query, Axios, Zustand, and Lucide.
+Backend: Python, FastAPI, Pydantic, and the asynchronous PyMongo client.
+AI: Google Gemini for language generation and embeddings, with LangGraph coordinating agent workflows.
+Data and retrieval: MongoDB for application data; ChromaDB or MongoDB vector search depending on deployment configuration. Files can use local storage or MongoDB GridFS.
+Chat: Nexconn browser SDK and server integration for authenticated sessions, live message updates, group channels, delivery, and webhooks.
+
+NEXCONN FEATURES
+Nexconn browser SDK (@nexconn/chat):
+- Authenticated real-time Nexconn session for the signed-in user.
+- Connection-state updates shown in the group chat experience.
+- Incoming message and offline-message sync events refresh the group's message history.
+
+Nexconn server integration:
+- Group chat channel creation and member synchronization.
+- Sending group messages and AI replies through Nexconn.
+- Message webhook handling and persistence in TeamSpace.
+
+HOW IT WORKS
+1. Create an account or sign in, then open My Groups.
+2. To start a group, choose Groups > Create group. The creator becomes the group admin and can invite connected teammates.
+3. To join an existing group, send a connection request to its admin first. After the connection is accepted, ask the admin to add you. There is no direct group-join request button.
+4. Group admins can add accepted connections. They can add up to 100 members per request and repeat as needed.
+5. Open group Chat to exchange messages in real time through Nexconn. Message history is persisted in TeamSpace.
+6. Open Documents to upload a PDF, TXT, or DOCX file. Wait for processing to complete before asking questions about it.
+7. In Chat, type @ and choose an enabled AI teammate. Ask a question; for document questions, TeamSpace can retrieve relevant group excerpts and show sources when available.
+
+APP KEY
+6tnym1br6iaw7
+
+AI TeamSpace: one shared space for the conversation, the documents, and the next step.
