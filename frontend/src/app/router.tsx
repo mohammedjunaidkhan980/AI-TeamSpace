@@ -4,6 +4,7 @@ import { Spinner } from "../components/ui/spinner";
 import { ProtectedRoute } from "../features/auth/components/protected-route";
 import { GuestRoute } from "../features/auth/components/guest-route";
 import { AppLayout } from "../components/layout/app-layout";
+import { LandingPage } from "../features/landing/pages/landing-page";
 
 const LoginPage = lazy(() => import("../features/auth/pages/login-page").then((module) => ({ default: module.LoginPage })));
 const RegisterPage = lazy(() => import("../features/auth/pages/register-page").then((module) => ({ default: module.RegisterPage })));
@@ -20,7 +21,7 @@ export function AppRouter() {
   return (
     <Suspense fallback={<div className="flex min-h-screen items-center justify-center bg-[#f8f9fc]"><Spinner className="h-6 w-6 text-brand-600" /></div>}>
       <Routes>
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/" element={<LandingPage />} />
         <Route element={<GuestRoute />}>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
