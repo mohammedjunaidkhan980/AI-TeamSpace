@@ -159,6 +159,7 @@ export interface MessageResponse {
   agent_name: string | null;
   orchestration_id: string | null;
   delivery_status: DeliveryStatus | null;
+  ai_processing_status: AIProcessingStatus;
 }
 
 export interface MessageHistoryResponse {

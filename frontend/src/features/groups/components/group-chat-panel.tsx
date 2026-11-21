@@ -15,6 +15,8 @@ import {
   Wifi,
   WifiOff,
 } from "lucide-react";
+import ReactMarkdown, { type Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Link } from "react-router-dom";
 import { Avatar } from "../../../components/ui/avatar";
@@ -32,6 +34,37 @@ import { messagesApi } from "../../../services/api/messages-api";
 import { groupsApi } from "../../../services/api/groups-api";
 import { agentsApi } from "../../../services/api/agents-api";
 import { useNexconnStatus } from "../../../services/nexconn-session";
+
+const assistantMarkdownComponents: Components = {
+  a: ({ children, href }) => (
+    <a href={href} target="_blank" rel="noreferrer" className="font-medium text-brand-700 underline underline-offset-2">
+      {children}
+    </a>
+  ),
+  blockquote: ({ children }) => <blockquote className="border-l-2 border-brand-300 pl-3 text-slate-600">{children}</blockquote>,
+  code: ({ children, className }) => (
+    <code className={className ? "font-mono text-[0.9em] text-slate-100" : "rounded bg-brand-100/70 px-1 py-0.5 font-mono text-[0.9em] text-slate-900"}>
+      {children}
+    </code>
+  ),
+  h1: ({ children }) => <h3 className="mb-2 mt-3 text-base font-semibold leading-6 text-slate-900">{children}</h3>,
+  h2: ({ children }) => <h3 className="mb-2 mt-3 text-sm font-semibold leading-6 text-slate-900">{children}</h3>,
+  h3: ({ children }) => <h3 className="mb-1.5 mt-2 text-sm font-semibold leading-5 text-slate-900">{children}</h3>,
+  hr: () => <hr className="my-3 border-slate-200" />,
+  li: ({ children }) => <li className="pl-0.5">{children}</li>,
+  ol: ({ children }) => <ol className="my-2 list-decimal space-y-1 pl-5">{children}</ol>,
+  p: ({ children }) => <p className="mb-2 break-words last:mb-0">{children}</p>,
+  pre: ({ children }) => <pre className="my-2 overflow-x-auto rounded-md bg-slate-900 p-3 text-xs leading-5">{children}</pre>,
+  strong: ({ children }) => <strong className="font-semibold text-slate-900">{children}</strong>,
+  table: ({ children }) => (
+    <div className="my-2 max-w-full overflow-x-auto">
+      <table className="w-full border-collapse text-left text-xs">{children}</table>
+    </div>
+  ),
+  td: ({ children }) => <td className="border border-slate-200 px-2 py-1.5">{children}</td>,
+  th: ({ children }) => <th className="border border-slate-200 bg-slate-100 px-2 py-1.5 font-semibold">{children}</th>,
+  ul: ({ children }) => <ul className="my-2 list-disc space-y-1 pl-5">{children}</ul>,
+};
 
 export function GroupChatPanel({ group }: { group: GroupDetails }) {
   const currentUserId = useAuthStore((state) => state.user?.id) ?? "";
@@ -65,7 +98,17 @@ export function GroupChatPanel({ group }: { group: GroupDetails }) {
     queryFn: ({ pageParam }) => messagesApi.history(group.group_id, pageParam),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
-    refetchInterval: 10_000,
+    refetchInterval: (query) =>
+      query.state.data?.pages.some((page) =>
+        page.items.some(
+          (message) =>
+            message.delivery_status !== "failed" &&
+            (message.ai_processing_status === "pending" ||
+              message.ai_processing_status === "processing"),
+        ),
+      )
+        ? 2_500
+        : 10_000,
   });
   const statsQuery = useQuery({
     queryKey: ["groups", group.group_id, "message-stats"],
@@ -366,8 +409,14 @@ function MessageItem({
   const isAgent = message.sender.type === "agent";
   const isOwn = message.sender.id === currentUserId;
   const canDelete = !message.is_deleted && (isOwn || isAdmin);
-  const canProcess = !message.is_deleted && !processed && message.sender.type === "user" && message.message_type === "text";
+  const canProcess = !message.is_deleted &&
+    !processed &&
+    (message.ai_processing_status === "not_required" ||
+      (message.ai_processing_status === "pending" && message.delivery_status === "failed")) &&
+    message.sender.type === "user" &&
+    message.message_type === "text";
   const canRetry = !message.is_deleted && message.sender.type === "user" && message.delivery_status === "failed" && isOwn;
+  const aiProcessing = message.ai_processing_status === "pending" || message.ai_processing_status === "processing";
 
   return (
     <article className="group flex gap-3">
@@ -380,9 +429,19 @@ function MessageItem({
           {message.delivery_status && <DeliveryBadge status={message.delivery_status} />}
         </div>
         <div className={`mt-1.5 rounded-2xl px-3.5 py-2.5 text-sm leading-6 ${message.is_deleted ? "bg-slate-50 italic text-slate-400" : isAgent ? "border border-brand-100 bg-brand-50/60 text-slate-800" : isOwn ? "bg-brand-600 text-white" : "bg-slate-100 text-slate-800"}`}>
-          <MessageContent content={message.content} isOwn={isOwn} isDeleted={message.is_deleted} />
+          <MessageContent content={message.content} isOwn={isOwn} isDeleted={message.is_deleted} isAssistant={isAgent} />
           {message.attachments.length > 0 && <div className="mt-2 space-y-1">{message.attachments.map((attachment, index) => <a key={`${attachment.url}-${index}`} href={attachment.url} target="_blank" rel="noreferrer" className={`block truncate text-xs underline ${isOwn ? "text-white/80" : "text-brand-700"}`}>{attachment.name ?? attachment.url}</a>)}</div>}
         </div>
+        {!isAgent && !message.is_deleted && aiProcessing && message.delivery_status !== "failed" && (
+          <p role="status" aria-live="polite" className="mt-2 inline-flex items-center gap-2 text-xs text-brand-700">
+            <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+            <span className="font-medium">Thinking</span>
+            <span className="text-slate-500">AI teammates are preparing a response</span>
+          </p>
+        )}
+        {!isAgent && !message.is_deleted && message.ai_processing_status === "failed" && (
+          <p role="status" className="mt-2 text-xs text-rose-700">AI couldn’t complete this response.</p>
+        )}
         {isAgent && !message.is_deleted && <MessageCitations citations={readCitations(message)} />}
         {message.reply_to_message_id && <p className="mt-1 text-[10px] text-slate-400">Reply to {message.reply_to_message_id}</p>}
       </div>
@@ -411,8 +470,9 @@ function MessageItem({
   );
 }
 
-function MessageContent({ content, isOwn, isDeleted }: { content: string; isOwn: boolean; isDeleted: boolean }) {
+function MessageContent({ content, isOwn, isDeleted, isAssistant }: { content: string; isOwn: boolean; isDeleted: boolean; isAssistant: boolean }) {
   if (isDeleted) return <span>{content}</span>;
+  if (isAssistant) return <AssistantMarkdown content={content} />;
   const parts = content.split(/(@[\w][\w ]*)/g);
   return (
     <span>
@@ -426,6 +486,16 @@ function MessageContent({ content, isOwn, isDeleted }: { content: string; isOwn:
         )
       )}
     </span>
+  );
+}
+
+function AssistantMarkdown({ content }: { content: string }) {
+  return (
+    <div className="break-words leading-6 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={assistantMarkdownComponents}>
+        {content}
+      </ReactMarkdown>
+    </div>
   );
 }
 
@@ -499,7 +569,7 @@ function OrchestrationCard({
         <>
           <div className="mt-2 flex items-center justify-between"><span className="text-xs text-slate-500">Run status</span><span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold capitalize text-slate-700">{run.status}</span></div>
           {run.agent_results.length > 0 ? <ol className="mt-3 space-y-2 border-l border-brand-100 pl-3">{run.agent_results.map((result) => <li key={result.agent_id} className="relative"><span className={`absolute -left-[17px] top-1 h-2 w-2 rounded-full ${result.status === "completed" ? "bg-emerald-500" : "bg-rose-400"}`} /><p className="text-xs font-medium text-slate-800">{result.agent_name}</p><p className="text-[10px] capitalize text-slate-500">{result.status}{result.execution_time ? ` · ${result.execution_time.toFixed(1)}s` : ""}</p>{result.response && <p className="mt-1 line-clamp-3 text-xs leading-5 text-slate-600">{result.response}</p>}</li>)}</ol> : <p className="mt-2 text-xs text-slate-500">The backend has not returned individual agent results yet.</p>}
-          {run.final_response && <div className="mt-3 rounded-lg bg-brand-50 p-2.5"><p className="text-[10px] font-semibold uppercase tracking-wide text-brand-700">Final response</p><p className="mt-1 line-clamp-5 whitespace-pre-wrap text-xs leading-5 text-slate-700">{run.final_response}</p></div>}
+          {run.final_response && <div className="mt-3 rounded-lg bg-brand-50 p-2.5"><p className="text-[10px] font-semibold uppercase tracking-wide text-brand-700">Final response</p><div className="mt-1 text-xs leading-5 text-slate-700"><AssistantMarkdown content={run.final_response} /></div></div>}
           <div className="mt-3 flex items-center justify-between gap-2">
             <p className="text-[10px] text-slate-500">Delivery: {delivery?.delivery_status ?? run.delivery_status ?? "not reported"}{delivery ? ` · retries ${delivery.retry_count}` : ""}</p>
             {run.status === "completed" && delivery?.delivery_status === "failed" && (

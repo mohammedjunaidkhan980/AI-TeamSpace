@@ -112,6 +112,7 @@ def _response_message(message: dict[str, Any]) -> MessageResponse:
         agent_name=message.get("agent_name"),
         orchestration_id=message.get("orchestration_id"),
         delivery_status=message.get("delivery_status"),
+        ai_processing_status=message.get("ai_processing_status", "not_required"),
     )
 
 

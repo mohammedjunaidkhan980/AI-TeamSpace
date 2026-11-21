@@ -43,6 +43,7 @@ class MessageResponse(BaseModel):
     agent_name: str | None = None
     orchestration_id: str | None = None
     delivery_status: Literal["pending", "sending", "delivered", "failed"] | None = None
+    ai_processing_status: AIProcessingStatus = "not_required"
 
 
 class CreateMessageRequest(BaseModel):
