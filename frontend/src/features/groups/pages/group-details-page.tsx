@@ -46,7 +46,7 @@ export function GroupDetailsPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6">
       <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-sm text-slate-500">
         <Link to="/groups" className="inline-flex items-center gap-1.5 hover:text-slate-900"><ArrowLeft className="h-4 w-4" /> Groups</Link>
         <ChevronRight className="h-3.5 w-3.5 text-slate-300" />
@@ -54,7 +54,7 @@ export function GroupDetailsPage() {
       </nav>
 
       <Card className="overflow-hidden">
-        <div className="flex flex-col gap-5 p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
+        <div className="flex flex-col gap-4 p-4 sm:gap-5 sm:p-6 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 items-center gap-4">
             <Avatar name={group.name} src={group.group_picture_url} className="h-14 w-14 rounded-2xl text-lg" />
             <div className="min-w-0">
@@ -65,7 +65,7 @@ export function GroupDetailsPage() {
               <p className="mt-1 max-w-2xl truncate text-sm text-slate-500">{group.description || "A shared space for your team’s work."}</p>
             </div>
           </div>
-          <div className="flex shrink-0 items-center gap-4 pl-[72px] text-sm text-slate-500 sm:pl-0">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 pl-[64px] text-sm text-slate-500 sm:shrink-0 sm:pl-0">
             <span className="inline-flex items-center gap-2"><UsersRound className="h-4 w-4 text-slate-400" />{group.member_count} members</span>
             <span className="inline-flex items-center gap-2"><Bot className="h-4 w-4 text-brand-500" />{group.ai_agents.length} agents</span>
           </div>

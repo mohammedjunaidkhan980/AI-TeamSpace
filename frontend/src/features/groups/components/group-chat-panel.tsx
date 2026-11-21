@@ -229,9 +229,9 @@ export function GroupChatPanel({ group }: { group: GroupDetails }) {
   }
 
   return (
-    <div className="grid min-h-[min(72vh,760px)] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-panel lg:grid-cols-[minmax(0,1fr)_300px]">
-      <section className="flex min-h-[560px] flex-col border-b border-slate-200 lg:border-b-0 lg:border-r">
-        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3.5 sm:px-5">
+    <div className="grid min-h-[min(70dvh,760px)] min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-panel sm:rounded-2xl lg:grid-cols-[minmax(0,1fr)_300px]">
+      <section className="flex min-h-[min(68dvh,620px)] min-w-0 flex-col border-b border-slate-200 sm:min-h-[560px] lg:border-b-0 lg:border-r">
+        <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-3 py-3 sm:px-5">
           <div className="flex items-center gap-2.5">
             <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-50 text-brand-600"><MessageSquareText className="h-4 w-4" /></span>
             <div><h2 className="text-sm font-semibold text-slate-900">Conversation</h2><p className="text-xs text-slate-400">{group.member_count} members · persisted history</p></div>
@@ -244,7 +244,7 @@ export function GroupChatPanel({ group }: { group: GroupDetails }) {
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-4 py-5 sm:px-6">
+        <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-6 sm:py-5">
           {historyQuery.isPending ? (
             <div className="space-y-5">{[1, 2, 3].map((item) => <div key={item} className="flex gap-3"><Skeleton className="h-9 w-9 rounded-full" /><Skeleton className="h-20 flex-1" /></div>)}</div>
           ) : historyQuery.isError ? (
@@ -286,7 +286,7 @@ export function GroupChatPanel({ group }: { group: GroupDetails }) {
         </div>
 
         <form
-          className="relative border-t border-slate-100 bg-slate-50/70 p-4 sm:p-5"
+          className="relative border-t border-slate-100 bg-slate-50/70 p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:p-5"
           onSubmit={(event: FormEvent<HTMLFormElement>) => {
             event.preventDefault();
             const content = draft.trim();
@@ -294,7 +294,7 @@ export function GroupChatPanel({ group }: { group: GroupDetails }) {
           }}
         >
           {mentionMatches.length > 0 && (
-            <div className="absolute bottom-full left-4 right-4 mb-1 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg sm:left-5 sm:right-5">
+            <div className="absolute bottom-full left-3 right-3 mb-1 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg sm:left-5 sm:right-5">
               {mentionMatches.map((agent, idx) => (
                 <button
                   key={agent.agent_id}
@@ -313,7 +313,7 @@ export function GroupChatPanel({ group }: { group: GroupDetails }) {
               ))}
             </div>
           )}
-          <div className="rounded-xl border border-slate-200 bg-white p-3.5">
+          <div className="rounded-xl border border-slate-200 bg-white p-3 sm:p-3.5">
             <textarea
               ref={textareaRef}
               aria-label="Message composer"
@@ -324,17 +324,19 @@ export function GroupChatPanel({ group }: { group: GroupDetails }) {
               rows={2}
               maxLength={65536}
               placeholder={nexconn.enabled ? "Write a message… (type @ to mention an agent)" : "Nexconn messaging is not configured for this workspace."}
-              className="w-full resize-none border-0 bg-transparent p-0 text-sm text-slate-700 placeholder:text-slate-400 focus:ring-0 disabled:cursor-not-allowed"
+              className="min-h-16 w-full resize-y border-0 bg-transparent p-0 text-base text-slate-700 placeholder:text-slate-400 focus:ring-0 disabled:cursor-not-allowed sm:min-h-0 sm:resize-none sm:text-sm"
             />
-            <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3">
-              <p className="text-[11px] leading-4 text-slate-400">Messages are stored in TeamSpace and sent via the authenticated Nexconn server integration.</p>
-              <Button type="submit" size="icon" disabled={!draft.trim() || !nexconn.enabled || sendMutation.isPending} aria-label="Send message" title={!nexconn.enabled ? "Nexconn is not configured" : "Send message"}><Send className="h-4 w-4" /></Button>
+            <div className="mt-3 flex flex-col-reverse items-stretch gap-2.5 border-t border-slate-100 pt-3 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-[10px] leading-4 text-slate-400 sm:text-[11px]">Messages are saved to group history and sent via Nexconn.</p>
+              <Button type="submit" size="icon" className="h-11 w-full shrink-0 sm:h-10 sm:w-10 sm:p-0" disabled={!draft.trim() || !nexconn.enabled || sendMutation.isPending} aria-label="Send message" title={!nexconn.enabled ? "Nexconn is not configured" : "Send message"}>
+                <Send className="h-4 w-4" /><span className="sm:sr-only">Send message</span>
+              </Button>
             </div>
           </div>
         </form>
       </section>
 
-      <aside className="space-y-5 bg-slate-50/50 p-4 sm:p-5">
+      <aside className="space-y-4 bg-slate-50/50 p-3 sm:space-y-5 sm:p-5">
         <div>
           <h3 className="text-sm font-semibold text-slate-900">Conversation details</h3>
           <p className="mt-1 text-xs leading-5 text-slate-500">Human messages, AI responses, and delivery state are persisted by the backend.</p>
@@ -426,8 +428,8 @@ function MessageItem({
   const aiProcessing = message.ai_processing_status === "pending" || message.ai_processing_status === "processing";
 
   return (
-    <article className="group flex gap-3">
-      <Avatar name={message.sender.name} className={`h-9 w-9 ${isAgent ? "rounded-xl bg-brand-100 text-brand-700" : ""}`} />
+    <article className="group flex min-w-0 gap-2.5 sm:gap-3">
+      <Avatar name={message.sender.name} className={`h-8 w-8 shrink-0 sm:h-9 sm:w-9 ${isAgent ? "rounded-xl bg-brand-100 text-brand-700" : ""}`} />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span className="text-sm font-semibold text-slate-900">{message.sender.name}</span>
@@ -435,7 +437,7 @@ function MessageItem({
           <time className="text-[11px] text-slate-400" dateTime={message.created_at}>{new Date(message.created_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</time>
           {message.delivery_status && <DeliveryBadge status={message.delivery_status} />}
         </div>
-        <div className={`mt-1.5 rounded-2xl px-3.5 py-2.5 text-sm leading-6 ${message.is_deleted ? "bg-slate-50 italic text-slate-400" : isAgent ? "border border-brand-100 bg-brand-50/60 text-slate-800" : isOwn ? "bg-brand-600 text-white" : "bg-slate-100 text-slate-800"}`}>
+        <div className={`mt-1.5 rounded-2xl px-3 py-2.5 text-sm leading-6 sm:px-3.5 ${message.is_deleted ? "bg-slate-50 italic text-slate-400" : isAgent ? "border border-brand-100 bg-brand-50/60 text-slate-800" : isOwn ? "bg-brand-600 text-white" : "bg-slate-100 text-slate-800"}`}>
           <MessageContent content={message.content} isOwn={isOwn} isDeleted={message.is_deleted} isAssistant={isAgent} />
           {message.attachments.length > 0 && <div className="mt-2 space-y-1">{message.attachments.map((attachment, index) => <a key={`${attachment.url}-${index}`} href={attachment.url} target="_blank" rel="noreferrer" className={`block truncate text-xs underline ${isOwn ? "text-white/80" : "text-brand-700"}`}>{attachment.name ?? attachment.url}</a>)}</div>}
         </div>
@@ -467,7 +469,7 @@ function MessageItem({
           </Button>
         )}
         {(canDelete || canRetry) && (
-          <Dropdown label={`Actions for message by ${message.sender.name}`} trigger={<Button type="button" variant="ghost" size="icon" className="h-6 w-6" aria-label={`Actions for message by ${message.sender.name}`}><MoreHorizontal className="h-3.5 w-3.5" /></Button>}>
+          <Dropdown label={`Actions for message by ${message.sender.name}`} trigger={<Button type="button" variant="ghost" size="icon" className="h-10 w-10 sm:h-6 sm:w-6" aria-label={`Actions for message by ${message.sender.name}`}><MoreHorizontal className="h-4 w-4 sm:h-3.5 sm:w-3.5" /></Button>}>
             {canRetry && <DropdownItem onClick={onRetry}><RefreshCw className="mr-2 h-4 w-4" />Retry delivery</DropdownItem>}
             {canDelete && <DropdownItem destructive onClick={onDelete}><Trash2 className="mr-2 h-4 w-4" />Delete message</DropdownItem>}
           </Dropdown>

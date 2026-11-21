@@ -179,7 +179,7 @@ export function AppLayout() {
             <button type="button" aria-label="Search" onClick={() => setSearchOpen(true)} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 sm:hidden"><Search className="h-5 w-5" /></button>
           </div>
         </header>
-        <main className="mx-auto w-full max-w-[1440px] px-4 py-7 sm:px-7 sm:py-9 lg:px-10"><Outlet /></main>
+        <main className="mx-auto w-full max-w-[1440px] px-3 py-4 sm:px-7 sm:py-9 lg:px-10"><Outlet /></main>
       </div>
       {mobileOpen && (
         <div className="fixed inset-0 z-50 lg:hidden">
